@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import BottomNav from '@/components/BottomNav';
 import ProjectMenu from '@/components/ProjectMenu';
+import HowToUseOverlay from '@/components/HowToUseOverlay';
 import { initDB, saveSample, saveProject, getProject } from '@/lib/db';
 
 export default function RecordPage() {
@@ -12,6 +13,7 @@ export default function RecordPage() {
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [hasAudioStream, setHasAudioStream] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isHowToUseOpen, setIsHowToUseOpen] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [currentProjectId, setCurrentProjectId] = useState<string>('');
   const [sampleCount, setSampleCount] = useState(0);
@@ -78,6 +80,14 @@ export default function RecordPage() {
     initializeProject();
   }, []);
 
+  // Check if we should show the "How to Use" overlay on first visit
+  useEffect(() => {
+    const hideHowToUse = localStorage.getItem('hideHowToUse');
+    if (!hideHowToUse) {
+      setIsHowToUseOpen(true);
+    }
+  }, []);
+
   // Update localStorage when project changes
   useEffect(() => {
     if (currentProjectId) {
@@ -85,11 +95,18 @@ export default function RecordPage() {
     }
   }, [currentProjectId]);
 
-  // Spacebar keyboard shortcut for recording
+  // Spacebar keyboard shortcut for recording and ? for Help
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if typing in an input field
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      // ? key to open How to Use
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault();
+        setIsHowToUseOpen(true);
         return;
       }
 
@@ -314,7 +331,28 @@ export default function RecordPage() {
     <div className="flex flex-col h-screen bg-black">
       {/* Header */}
       <div className="flex justify-between items-center p-4">
-        <h1 className="text-white text-2xl font-bold">Chop Shop</h1>
+        <div className="flex items-center gap-3">
+          <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8">
+            <rect width="200" height="200" fill="#000000" />
+            <rect x="30" y="70" width="12" height="60" fill="#FF0080" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #FF0080)'}} />
+            <rect x="50" y="55" width="12" height="90" fill="#FF0080" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #FF0080)'}} />
+            <rect x="70" y="65" width="12" height="70" fill="#FF00FF" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #FF00FF)'}} />
+            <rect x="90" y="45" width="12" height="110" fill="#8000FF" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #8000FF)'}} />
+            <rect x="110" y="57.5" width="12" height="85" fill="#0080FF" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #0080FF)'}} />
+            <rect x="130" y="52.5" width="12" height="95" fill="#00FFFF" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #00FFFF)'}} />
+            <rect x="150" y="62.5" width="12" height="75" fill="#00FF80" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #00FF80)'}} />
+            <rect x="170" y="72.5" width="12" height="55" fill="#00FF00" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #00FF00)'}} />
+          </svg>
+          <h1 className="text-white text-2xl font-bold">Chop Shop</h1>
+        </div>
         <button
           onClick={() => setIsMenuOpen(true)}
           className="text-white p-2"
@@ -374,7 +412,7 @@ export default function RecordPage() {
               </>
             ) : (
               <>
-                <p>Press the button to grant audio access</p>
+                <p>Press the button or spacebar to grant audio access and record audio samples</p>
                 <p className="mt-2">
                   <strong className="text-gray-300">Important:</strong> Select a <strong className="text-gray-300">BROWSER TAB</strong>
                 </p>
@@ -422,7 +460,14 @@ export default function RecordPage() {
       <BottomNav />
 
       {/* Project Menu */}
-      <ProjectMenu isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
+      <ProjectMenu
+        isOpen={isMenuOpen}
+        onClose={() => setIsMenuOpen(false)}
+        onOpenHowToUse={() => setIsHowToUseOpen(true)}
+      />
+
+      {/* How to Use Overlay */}
+      <HowToUseOverlay isOpen={isHowToUseOpen} onClose={() => setIsHowToUseOpen(false)} />
     </div>
   );
 }

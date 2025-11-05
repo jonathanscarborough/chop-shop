@@ -112,13 +112,8 @@ export default function SharePage() {
   };
 
   const handleConnectSoundCloud = () => {
-    // SoundCloud OAuth flow
-    const clientId = process.env.NEXT_PUBLIC_SOUNDCLOUD_CLIENT_ID;
-    const redirectUri = `${window.location.origin}/soundcloud-callback`;
-    const authUrl = `https://soundcloud.com/connect?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=non-expiring`;
-
-    // Open auth window
-    window.open(authUrl, '_blank', 'width=600,height=700');
+    // SoundCloud OAuth flow requires proper setup
+    alert('SoundCloud Integration Setup Required:\n\n1. Create a SoundCloud app at https://soundcloud.com/you/apps\n2. Add your Client ID to .env.local as NEXT_PUBLIC_SOUNDCLOUD_CLIENT_ID\n3. Set redirect URI in SoundCloud app settings to match your app URL\n4. Restart the development server\n\nOnce configured, you\'ll be able to upload recordings directly to SoundCloud.');
   };
 
   const handleShareSoundCloud = async () => {
@@ -140,7 +135,28 @@ export default function SharePage() {
     <div className="flex flex-col h-screen bg-black">
       {/* Header */}
       <div className="flex justify-between items-center p-4">
-        <h1 className="text-white text-2xl font-bold">Share</h1>
+        <div className="flex items-center gap-3">
+          <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8">
+            <rect width="200" height="200" fill="#000000" />
+            <rect x="30" y="70" width="12" height="60" fill="#FF0080" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #FF0080)'}} />
+            <rect x="50" y="55" width="12" height="90" fill="#FF0080" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #FF0080)'}} />
+            <rect x="70" y="65" width="12" height="70" fill="#FF00FF" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #FF00FF)'}} />
+            <rect x="90" y="45" width="12" height="110" fill="#8000FF" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #8000FF)'}} />
+            <rect x="110" y="57.5" width="12" height="85" fill="#0080FF" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #0080FF)'}} />
+            <rect x="130" y="52.5" width="12" height="95" fill="#00FFFF" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #00FFFF)'}} />
+            <rect x="150" y="62.5" width="12" height="75" fill="#00FF80" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #00FF80)'}} />
+            <rect x="170" y="72.5" width="12" height="55" fill="#00FF00" rx="6"
+                  style={{filter: 'drop-shadow(0 0 8px #00FF00)'}} />
+          </svg>
+          <h1 className="text-white text-2xl font-bold">Share</h1>
+        </div>
         <button
           onClick={() => setIsMenuOpen(true)}
           className="text-white p-2"
