@@ -59,6 +59,18 @@ export default function SequencePage() {
     }
   }, []);
 
+  // Reload samples when project menu closes (in case project was changed)
+  useEffect(() => {
+    if (!isMenuOpen) {
+      const storedProjectId = localStorage.getItem('currentProjectId');
+      if (storedProjectId && storedProjectId !== currentProjectId) {
+        setCurrentProjectId(storedProjectId);
+        loadSamples(storedProjectId);
+        if (isPlaying) stopSequencer();
+      }
+    }
+  }, [isMenuOpen]);
+
   // Update refs when state changes
   useEffect(() => {
     samplesRef.current = samples;
@@ -687,12 +699,6 @@ export default function SequencePage() {
       <ProjectMenu
         isOpen={isMenuOpen}
         onClose={() => setIsMenuOpen(false)}
-        currentProjectId={currentProjectId}
-        onProjectChange={(projectId) => {
-          setCurrentProjectId(projectId);
-          loadSamples(projectId);
-          if (isPlaying) stopSequencer();
-        }}
       />
 
       <HowToUseOverlay
