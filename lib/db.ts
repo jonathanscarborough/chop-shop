@@ -13,6 +13,7 @@ export interface AudioSample {
   timestamp: number;
   duration?: number;
   name?: string;
+  midiNote?: number; // MIDI note number (0-127) for triggering via MIDI controller
 }
 
 export interface Project {

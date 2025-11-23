@@ -4,11 +4,18 @@ import { useState, useEffect, useRef } from 'react';
 
 interface MetronomeProps {
   isPlaying?: boolean;
+  onBpmChange?: (bpm: number) => void;
+  onSubdivisionChange?: (subdivision: number) => void;
+  layout?: 'vertical' | 'horizontal';
 }
 
-export default function Metronome({ isPlaying = false }: MetronomeProps) {
+// Beat subdivision options: 1 = quarter note, 2 = 8th, 4 = 16th, 8 = 32nd
+export type BeatSubdivision = 1 | 2 | 4 | 8;
+
+export default function Metronome({ isPlaying = false, onBpmChange, onSubdivisionChange, layout = 'vertical' }: MetronomeProps) {
   const [isEnabled, setIsEnabled] = useState(false);
   const [bpm, setBpm] = useState(120);
+  const [subdivision, setSubdivision] = useState<BeatSubdivision>(4); // Default to 16th notes
   const [tapTimes, setTapTimes] = useState<number[]>([]);
   const [isTapping, setIsTapping] = useState(false);
   const [isFlashing, setIsFlashing] = useState(false);
@@ -17,6 +24,20 @@ export default function Metronome({ isPlaying = false }: MetronomeProps) {
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const tapTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const flashTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Notify parent of BPM changes
+  useEffect(() => {
+    if (onBpmChange) {
+      onBpmChange(bpm);
+    }
+  }, [bpm, onBpmChange]);
+
+  // Notify parent of subdivision changes
+  useEffect(() => {
+    if (onSubdivisionChange) {
+      onSubdivisionChange(subdivision);
+    }
+  }, [subdivision, onSubdivisionChange]);
 
   useEffect(() => {
     // Initialize a separate audio context for the metronome
@@ -174,25 +195,131 @@ export default function Metronome({ isPlaying = false }: MetronomeProps) {
     }, 2000);
   };
 
-  return (
-    <div className="bg-gray-900 rounded-xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-white font-bold flex items-center gap-2">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          Metronome
-        </h3>
+  const getSubdivisionLabel = (sub: BeatSubdivision): string => {
+    switch (sub) {
+      case 1: return '1/4';
+      case 2: return '1/8';
+      case 4: return '1/16';
+      case 8: return '1/32';
+    }
+  };
+
+  // Metronome SVG Icon (traditional triangular design)
+  const MetronomeIcon = () => (
+    <svg
+      className={`w-8 h-8 cursor-pointer transition-all hover:scale-110 ${
+        isEnabled ? 'text-green-500' : 'text-gray-500'
+      }`}
+      viewBox="0 0 100 100"
+      fill="currentColor"
+      onClick={() => setIsEnabled(!isEnabled)}
+    >
+      {/* Base */}
+      <rect x="20" y="85" width="60" height="8" rx="2" />
+      {/* Triangular body */}
+      <path d="M 50 15 L 25 85 L 75 85 Z" />
+      {/* Pendulum rod */}
+      <line
+        x1="50"
+        y1="25"
+        x2={isEnabled && isFlashing ? "60" : "55"}
+        y2="70"
+        stroke={isEnabled ? "#22c55e" : "#6b7280"}
+        strokeWidth="2"
+        strokeLinecap="round"
+        className="transition-all duration-75"
+      />
+      {/* Pendulum weight */}
+      <circle
+        cx={isEnabled && isFlashing ? "60" : "55"}
+        cy="70"
+        r="5"
+        fill={isEnabled ? "#22c55e" : "#6b7280"}
+        className="transition-all duration-75"
+      />
+    </svg>
+  );
+
+  if (layout === 'horizontal') {
+    return (
+      <div className="bg-gray-900 rounded-xl p-3 flex items-center gap-4">
+        {/* Clickable Metronome Icon */}
+        <MetronomeIcon />
+
+        {/* BPM Input */}
+        <div className="flex items-center gap-2">
+          <label className="text-gray-400 text-xs whitespace-nowrap">BPM</label>
+          <input
+            type="number"
+            min="20"
+            max="300"
+            value={bpm}
+            onChange={handleBpmChange}
+            onBlur={handleBpmBlur}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            className="w-16 bg-gray-800 text-white rounded-lg px-2 py-1 text-center font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        {/* Beat Subdivision Selector */}
+        <div className="flex items-center gap-2">
+          <label className="text-gray-400 text-xs whitespace-nowrap">Note</label>
+          <div className="flex gap-1 bg-gray-800 rounded-lg p-1">
+            {([1, 2, 4, 8] as BeatSubdivision[]).map((sub) => (
+              <button
+                key={sub}
+                onClick={() => setSubdivision(sub)}
+                className={`px-2 py-1 rounded text-xs font-bold transition-all ${
+                  subdivision === sub
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-transparent text-gray-400 hover:text-white'
+                }`}
+              >
+                {getSubdivisionLabel(sub)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Tap Tempo Button */}
         <button
-          onClick={() => setIsEnabled(!isEnabled)}
-          className={`px-3 py-1 rounded-lg font-bold text-sm transition-all ${
-            isEnabled
-              ? 'bg-green-600 hover:bg-green-700 text-white'
-              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+          onClick={handleTapTempo}
+          className={`px-3 py-1 rounded-lg font-bold text-xs transition-all whitespace-nowrap ${
+            isTapping
+              ? 'bg-blue-600 text-white scale-95'
+              : 'bg-gray-800 hover:bg-gray-700 text-white'
           }`}
         >
-          {isEnabled ? 'ON' : 'OFF'}
+          Tap Tempo
         </button>
+
+        {/* Beat Indicator */}
+        {isEnabled && (
+          <div
+            className={`w-3 h-3 rounded-full transition-all duration-75 ${
+              isFlashing
+                ? 'bg-green-400 shadow-lg shadow-green-400/50 scale-125'
+                : 'bg-gray-700'
+            }`}
+          />
+        )}
+
+        {/* Tapping Indicator */}
+        {isTapping && tapTimes.length >= 2 && (
+          <span className="text-blue-400 text-xs">
+            {tapTimes.length} taps
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  // Vertical layout (default)
+  return (
+    <div className="bg-gray-900 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-center">
+        <MetronomeIcon />
       </div>
 
       <div className="flex items-center gap-3">
@@ -225,6 +352,26 @@ export default function Metronome({ isPlaying = false }: MetronomeProps) {
             <span>Tap Tempo</span>
           </div>
         </button>
+      </div>
+
+      {/* Beat Subdivision Selector */}
+      <div className="space-y-2">
+        <label className="text-gray-400 text-xs block">Beat Subdivision</label>
+        <div className="grid grid-cols-4 gap-1 bg-gray-800 rounded-lg p-1">
+          {([1, 2, 4, 8] as BeatSubdivision[]).map((sub) => (
+            <button
+              key={sub}
+              onClick={() => setSubdivision(sub)}
+              className={`px-2 py-2 rounded text-xs font-bold transition-all ${
+                subdivision === sub
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-transparent text-gray-400 hover:text-white'
+              }`}
+            >
+              {getSubdivisionLabel(sub)}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isTapping && tapTimes.length >= 2 && (

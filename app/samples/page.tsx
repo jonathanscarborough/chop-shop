@@ -4,7 +4,12 @@ import { useState, useEffect, useRef } from 'react';
 import BottomNav from '@/components/BottomNav';
 import ProjectMenu from '@/components/ProjectMenu';
 import Metronome from '@/components/Metronome';
-import { getSamplesByProject, AudioSample, deleteSample, saveMasterRecording } from '@/lib/db';
+import HelpButton from '@/components/HelpButton';
+import HowToUseOverlay from '@/components/HowToUseOverlay';
+import AudioEditor from '@/components/AudioEditor';
+import { getSamplesByProject, AudioSample, deleteSample, saveMasterRecording, saveSample } from '@/lib/db';
+import midiService, { MIDIStorage, MIDIDeviceInfo, MIDIHelpers } from '@/lib/midi';
+import { useRouter } from 'next/navigation';
 
 // Keyboard mapping for samples
 const KEYBOARD_KEYS = [
@@ -16,6 +21,8 @@ const KEYBOARD_KEYS = [
 
 // Audio effects interface
 interface SampleEffects {
+  volume: number; // 0 to 2 (0% to 200%)
+  pan: number; // -1 to 1 (L to R)
   reverb: { enabled: boolean; decay: number; wet: number };
   delay: { enabled: boolean; time: number; feedback: number; wet: number };
   compression: { enabled: boolean; threshold: number; ratio: number; attack: number; release: number };
@@ -26,6 +33,8 @@ interface SampleEffects {
 }
 
 const DEFAULT_EFFECTS: SampleEffects = {
+  volume: 1, // 100%
+  pan: 0, // Center
   reverb: { enabled: false, decay: 2, wet: 0.3 },
   delay: { enabled: false, time: 0.3, feedback: 0.3, wet: 0.5 },
   compression: { enabled: false, threshold: -24, ratio: 4, attack: 0.003, release: 0.25 },
@@ -36,13 +45,22 @@ const DEFAULT_EFFECTS: SampleEffects = {
 };
 
 export default function SamplesPage() {
+  const router = useRouter();
   const [samples, setSamples] = useState<AudioSample[]>([]);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isHowToUseOpen, setIsHowToUseOpen] = useState(false);
   const [playbackMode, setPlaybackMode] = useState<'monophonic' | 'polyphonic'>('polyphonic');
   const [currentProjectId, setCurrentProjectId] = useState<string>('default-project');
   const [activeKeys, setActiveKeys] = useState<Set<string>>(new Set());
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedSamples, setSelectedSamples] = useState<Set<string>>(new Set());
+  const [isInstrumentMenuOpen, setIsInstrumentMenuOpen] = useState(false);
+  const [savedInstruments, setSavedInstruments] = useState<string[]>([]);
+  const [showLoadSubmenu, setShowLoadSubmenu] = useState(false);
+  const [editingSample, setEditingSample] = useState<{blob: Blob; id: string; index: number; name?: string; midiNote?: number} | null>(null);
+  const [midiDevices, setMidiDevices] = useState<MIDIDeviceInfo[]>([]);
+  const [selectedMidiDevice, setSelectedMidiDevice] = useState<string>('');
+  const [isMidiPanelExpanded, setIsMidiPanelExpanded] = useState(false);
 
   // Audio effects states
   const [sampleEffects, setSampleEffects] = useState<Map<string, SampleEffects>>(new Map());
@@ -50,6 +68,31 @@ export default function SamplesPage() {
   const [hoveredSample, setHoveredSample] = useState<string | null>(null);
   const [showEffectsMenu, setShowEffectsMenu] = useState<string | null>(null);
   const [playingSamples, setPlayingSamples] = useState<Map<string, { source: AudioBufferSourceNode; startTime: number; duration: number }>>(new Map());
+
+  // Save effects to localStorage whenever they change
+  useEffect(() => {
+    if (currentProjectId && sampleEffects.size > 0) {
+      const effectsKey = `effects_${currentProjectId}`;
+      const effectsArray = Array.from(sampleEffects.entries());
+      localStorage.setItem(effectsKey, JSON.stringify(effectsArray));
+    }
+  }, [sampleEffects, currentProjectId]);
+
+  // Load effects from localStorage when project changes
+  useEffect(() => {
+    if (currentProjectId) {
+      const effectsKey = `effects_${currentProjectId}`;
+      const savedEffects = localStorage.getItem(effectsKey);
+      if (savedEffects) {
+        try {
+          const effectsArray = JSON.parse(savedEffects);
+          setSampleEffects(new Map(effectsArray));
+        } catch (error) {
+          console.error('Failed to load effects:', error);
+        }
+      }
+    }
+  }, [currentProjectId]);
 
   // Master recording states
   const [isMasterRecording, setIsMasterRecording] = useState(false);
@@ -76,10 +119,55 @@ export default function SamplesPage() {
       setCurrentProjectId(storedProjectId);
     }
 
+    // Load saved instruments list
+    loadSavedInstruments();
+
+    // Initialize MIDI
+    midiService.initialize().then(success => {
+      if (success) {
+        console.log('MIDI initialized successfully');
+        const devices = midiService.getInputDevices();
+        setMidiDevices(devices);
+
+        // Try to restore previous MIDI device
+        const savedDeviceId = localStorage.getItem('midiDeviceId');
+        if (savedDeviceId && devices.find(d => d.id === savedDeviceId)) {
+          setSelectedMidiDevice(savedDeviceId);
+          midiService.setActiveInput(savedDeviceId);
+        }
+      }
+    });
+
     return () => {
       audioContextRef.current?.close();
+      midiService.disconnect();
     };
   }, []);
+
+  const loadSavedInstruments = () => {
+    try {
+      const instrumentsData = localStorage.getItem('savedInstruments');
+      if (instrumentsData) {
+        try {
+          const instruments = JSON.parse(instrumentsData);
+          if (Array.isArray(instruments)) {
+            setSavedInstruments(instruments);
+          } else {
+            console.error('Invalid instruments data, clearing');
+            localStorage.removeItem('savedInstruments');
+            setSavedInstruments([]);
+          }
+        } catch (parseError) {
+          console.error('Failed to parse savedInstruments, clearing:', parseError);
+          localStorage.removeItem('savedInstruments');
+          setSavedInstruments([]);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load saved instruments:', error);
+      setSavedInstruments([]);
+    }
+  };
 
   // Load samples when project changes
   useEffect(() => {
@@ -87,6 +175,23 @@ export default function SamplesPage() {
       loadSamples();
     }
   }, [currentProjectId]);
+
+  // Set up MIDI note event handler
+  useEffect(() => {
+    if (!currentProjectId) return;
+
+    const unsubscribe = midiService.onNoteEvent((note, velocity, noteOn) => {
+      if (!noteOn || isSelectMode) return;
+
+      // Find sample with matching MIDI note
+      const sample = samples.find(s => s.midiNote === note);
+      if (sample) {
+        playSample(sample.blob, sample.id);
+      }
+    });
+
+    return unsubscribe;
+  }, [samples, currentProjectId, isSelectMode]);
 
   // Animation loop for progress updates
   useEffect(() => {
@@ -113,8 +218,23 @@ export default function SamplesPage() {
   // Keyboard event handlers
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if typing in an input field or in select mode
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || isSelectMode) {
+      // Ignore if typing in a text input field, but allow keyboard shortcuts when using range sliders or checkboxes
+      if (
+        (e.target instanceof HTMLInputElement && e.target.type !== 'range' && e.target.type !== 'checkbox') ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      // ? key to open How to Use
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault();
+        setIsHowToUseOpen(true);
+        return;
+      }
+
+      // Don't process sample triggers when in select mode
+      if (isSelectMode) {
         return;
       }
 
@@ -263,6 +383,18 @@ export default function SamplesPage() {
       currentNode = reverbMix;
     }
 
+    // Pan (stereo panner)
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = typeof effects.pan === 'number' && !isNaN(effects.pan) ? effects.pan : 0;
+    currentNode.connect(panner);
+    currentNode = panner;
+
+    // Volume (gain)
+    const volumeGain = ctx.createGain();
+    volumeGain.gain.value = typeof effects.volume === 'number' && !isNaN(effects.volume) ? effects.volume : 1;
+    currentNode.connect(volumeGain);
+    currentNode = volumeGain;
+
     return currentNode;
   };
 
@@ -346,18 +478,53 @@ export default function SamplesPage() {
   const deleteSelectedSamples = async () => {
     if (selectedSamples.size === 0) return;
 
-    if (!confirm(`Delete ${selectedSamples.size} sample${selectedSamples.size > 1 ? 's' : ''}?`)) {
+    // Check which samples are assigned in sequencers
+    const sequenceKey = `sequence_${currentProjectId}`;
+    const savedSequence = localStorage.getItem(sequenceKey);
+    const assignedSampleIds = new Set<string>();
+
+    if (savedSequence) {
+      try {
+        const sequenceData = JSON.parse(savedSequence);
+        if (sequenceData && sequenceData.sequencers && Array.isArray(sequenceData.sequencers)) {
+          sequenceData.sequencers.forEach((seq: any) => {
+            if (seq && seq.steps && Array.isArray(seq.steps)) {
+              seq.steps.forEach((sampleId: string | null) => {
+                if (sampleId) assignedSampleIds.add(sampleId);
+              });
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Failed to parse sequencer data:', error);
+        // Clear corrupt data
+        localStorage.removeItem(sequenceKey);
+      }
+    }
+
+    const samplesToDelete = Array.from(selectedSamples).filter(id => !assignedSampleIds.has(id));
+    const samplesToKeep = Array.from(selectedSamples).filter(id => assignedSampleIds.has(id));
+
+    let message = `Delete ${selectedSamples.size} sample${selectedSamples.size > 1 ? 's' : ''}?`;
+    if (samplesToKeep.length > 0) {
+      message = `Delete ${samplesToDelete.length} sample${samplesToDelete.length > 1 ? 's' : ''}? (${samplesToKeep.length} assigned in sequencers will be preserved)`;
+    }
+
+    if (!confirm(message)) {
       return;
     }
 
     try {
-      for (const sampleId of selectedSamples) {
+      for (const sampleId of samplesToDelete) {
         await deleteSample(sampleId);
       }
       setSelectedSamples(new Set());
       setIsSelectMode(false);
       await loadSamples();
-      console.log('Deleted', selectedSamples.size, 'samples');
+      console.log(`Deleted ${samplesToDelete.length} samples, kept ${samplesToKeep.length} assigned samples`);
+      if (samplesToKeep.length > 0) {
+        alert(`Deleted ${samplesToDelete.length} samples. ${samplesToKeep.length} samples preserved because they are assigned in sequencers.`);
+      }
     } catch (error) {
       console.error('Failed to delete samples:', error);
       alert('Failed to delete samples. Please try again.');
@@ -367,7 +534,9 @@ export default function SamplesPage() {
   const clearAllSamples = async () => {
     if (samples.length === 0) return;
 
-    if (!confirm(`Delete all ${samples.length} samples? This cannot be undone.`)) {
+    const message = `Delete all ${samples.length} samples? This cannot be undone.`;
+
+    if (!confirm(message)) {
       return;
     }
 
@@ -378,7 +547,7 @@ export default function SamplesPage() {
       setSamples([]);
       setSelectedSamples(new Set());
       setIsSelectMode(false);
-      console.log('Cleared all samples');
+      console.log(`Cleared all ${samples.length} samples`);
     } catch (error) {
       console.error('Failed to clear samples:', error);
       alert('Failed to clear samples. Please try again.');
@@ -587,7 +756,200 @@ export default function SamplesPage() {
     return KEYBOARD_KEYS[index]?.toUpperCase() || '';
   };
 
+  const handleSaveEditedSample = async (editedBlob: Blob) => {
+    if (!editingSample) return;
+
+    try {
+      // Initialize audio context if needed
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+
+      // Get duration of edited sample
+      const arrayBuffer = await editedBlob.arrayBuffer();
+      let duration = 0;
+
+      try {
+        const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer.slice(0));
+        duration = audioBuffer.duration;
+      } catch (decodeError) {
+        console.warn('Could not decode audio for duration, using default:', decodeError);
+        duration = 1; // Default duration if decode fails
+      }
+
+      // Update the sample in IndexedDB
+      await saveSample({
+        id: editingSample.id,
+        projectId: currentProjectId,
+        blob: editedBlob,
+        timestamp: Date.now(),
+        duration: duration
+      });
+
+      // Reload samples to show the updated version
+      await loadSamples();
+      console.log('Saved edited sample:', editingSample.id);
+    } catch (error) {
+      console.error('Failed to save edited sample:', error);
+      // Don't alert on auto-save failures, just log them
+    }
+  };
+
+  const handleSampleNameChange = async (newName: string) => {
+    if (!editingSample) return;
+
+    try {
+      // Find the current sample to get its blob and other properties
+      const currentSample = samples.find(s => s.id === editingSample.id);
+      if (!currentSample) return;
+
+      // Update the sample in IndexedDB with the new name
+      await saveSample({
+        id: editingSample.id,
+        projectId: currentProjectId,
+        blob: currentSample.blob,
+        timestamp: currentSample.timestamp,
+        duration: currentSample.duration,
+        name: newName,
+        midiNote: currentSample.midiNote
+      });
+
+      // Update the editingSample state to reflect the new name
+      setEditingSample(prev => prev ? { ...prev, name: newName } : null);
+
+      // Reload samples to show the updated name everywhere
+      await loadSamples();
+      console.log('Saved sample name:', newName);
+    } catch (error) {
+      console.error('Failed to save sample name:', error);
+    }
+  };
+
+  // Instrument Management Functions
+  const handleSaveInstrument = async () => {
+    const instrumentName = prompt('Enter a name for this instrument:');
+    if (!instrumentName) return;
+
+    try {
+      const instrumentData = {
+        name: instrumentName,
+        timestamp: Date.now(),
+        samples: samples.map(s => ({ id: s.id, timestamp: s.timestamp })),
+        effects: Array.from(sampleEffects.entries())
+      };
+
+      const key = `instrument_${instrumentName}_${Date.now()}`;
+      localStorage.setItem(key, JSON.stringify(instrumentData));
+
+      // Update instruments list
+      const newInstruments = [...savedInstruments, key];
+      localStorage.setItem('savedInstruments', JSON.stringify(newInstruments));
+      setSavedInstruments(newInstruments);
+
+      alert(`Instrument "${instrumentName}" saved successfully!`);
+    } catch (error) {
+      console.error('Failed to save instrument:', error);
+      alert('Failed to save instrument. Please try again.');
+    }
+  };
+
+  const handleLoadInstrument = async (instrumentKey: string) => {
+    try {
+      const instrumentData = localStorage.getItem(instrumentKey);
+      if (!instrumentData) {
+        alert('Instrument not found.');
+        return;
+      }
+
+      const parsed = JSON.parse(instrumentData);
+      // Load effects
+      const effectsMap = new Map(parsed.effects) as Map<string, SampleEffects>;
+      setSampleEffects(effectsMap);
+
+      alert(`Instrument "${parsed.name}" loaded successfully!`);
+    } catch (error) {
+      console.error('Failed to load instrument:', error);
+      alert('Failed to load instrument. Please try again.');
+    }
+  };
+
+  const handleExportInstrument = async () => {
+    try {
+      const instrumentData = {
+        name: 'ChopShop_Instrument',
+        timestamp: Date.now(),
+        samples: await Promise.all(samples.map(async (s) => ({
+          id: s.id,
+          timestamp: s.timestamp,
+          blob: await s.blob.arrayBuffer().then(buf => Array.from(new Uint8Array(buf)))
+        }))),
+        effects: Array.from(sampleEffects.entries())
+      };
+
+      const dataStr = JSON.stringify(instrumentData);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chopshop-instrument-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      console.log('Instrument exported');
+    } catch (error) {
+      console.error('Failed to export instrument:', error);
+      alert('Failed to export instrument. Please try again.');
+    }
+  };
+
+  const handleImportInstrument = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const instrumentData = JSON.parse(text);
+
+        // Import samples
+        const importedSamples: AudioSample[] = [];
+        for (const sampleData of instrumentData.samples) {
+          const uint8Array = new Uint8Array(sampleData.blob);
+          const blob = new Blob([uint8Array], { type: 'audio/webm' });
+          const sample: AudioSample = {
+            id: `imported-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            projectId: currentProjectId,
+            blob,
+            timestamp: Date.now()
+          };
+          importedSamples.push(sample);
+          // Save to IndexedDB
+          await saveSample(sample);
+        }
+
+        // Load effects
+        const effectsMap = new Map<string, SampleEffects>(instrumentData.effects);
+        setSampleEffects(effectsMap);
+
+        // Reload samples
+        await loadSamples();
+
+        alert('Instrument imported successfully!');
+      } catch (error) {
+        console.error('Failed to import instrument:', error);
+        alert('Failed to import instrument. Please make sure the file is valid.');
+      }
+    };
+    input.click();
+  };
+
   const gridSize = Math.max(2, Math.ceil(Math.sqrt(samples.length)));
+  const buttonSize = 80; // Fixed button size in pixels (50% of original ~160px)
 
   return (
     <div className="flex flex-col h-screen bg-black">
@@ -617,13 +979,106 @@ export default function SamplesPage() {
           {!isSelectMode && (
             <button
               onClick={() => setPlaybackMode(playbackMode === 'monophonic' ? 'polyphonic' : 'monophonic')}
-              className="px-3 py-1 rounded-lg text-xs font-bold bg-gray-800 hover:bg-gray-700 text-white"
+              className="hidden px-3 py-1 rounded-lg text-xs font-bold bg-gray-800 hover:bg-gray-700 text-white"
             >
               {playbackMode === 'monophonic' ? 'MONO' : 'POLY'}
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 relative">
+          {/* Instrument Management Dropdown */}
+          {!isSelectMode && (
+            <div className="relative">
+              <button
+                onClick={() => setIsInstrumentMenuOpen(!isInstrumentMenuOpen)}
+                className="px-3 py-1 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1"
+              >
+                Instrument
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {/* Dropdown Menu */}
+              {isInstrumentMenuOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-gray-800 rounded-lg shadow-lg z-50 border border-gray-700">
+                  <button
+                    onClick={() => {
+                      handleSaveInstrument();
+                      setIsInstrumentMenuOpen(false);
+                      setShowLoadSubmenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-gray-700 rounded-t-lg"
+                  >
+                    Save as Instrument
+                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowLoadSubmenu(!showLoadSubmenu)}
+                      className="w-full text-left px-4 py-2 text-sm text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
+                      disabled={savedInstruments.length === 0}
+                    >
+                      <span>Load Instrument</span>
+                      {savedInstruments.length > 0 && (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      )}
+                    </button>
+                    {showLoadSubmenu && savedInstruments.length > 0 && (
+                      <div className="absolute left-full top-0 ml-1 w-56 bg-gray-700 rounded-lg shadow-lg border border-gray-600 max-h-64 overflow-y-auto">
+                        {savedInstruments.map((instrumentKey) => {
+                          let name = 'Unknown';
+                          try {
+                            const data = localStorage.getItem(instrumentKey);
+                            if (data) {
+                              name = JSON.parse(data).name || 'Unknown';
+                            }
+                          } catch (error) {
+                            console.error('Failed to parse instrument name:', error);
+                          }
+                          return (
+                            <button
+                              key={instrumentKey}
+                              onClick={() => {
+                                handleLoadInstrument(instrumentKey);
+                                setIsInstrumentMenuOpen(false);
+                                setShowLoadSubmenu(false);
+                              }}
+                              className="w-full text-left px-4 py-2 text-sm text-white hover:bg-gray-600 first:rounded-t-lg last:rounded-b-lg"
+                            >
+                              {name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      handleExportInstrument();
+                      setIsInstrumentMenuOpen(false);
+                      setShowLoadSubmenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-gray-700"
+                  >
+                    Export Instrument
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleImportInstrument();
+                      setIsInstrumentMenuOpen(false);
+                      setShowLoadSubmenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-gray-700 rounded-b-lg"
+                  >
+                    Import Instrument
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {samples.length > 0 && (
             <>
               {isSelectMode ? (
@@ -675,13 +1130,16 @@ export default function SamplesPage() {
         </div>
       </div>
 
-      {/* Transport Controls */}
+      {/* Metronome and Transport Controls */}
       <div className="px-4 py-3 bg-gray-900 border-t border-b border-gray-800">
-        <div className="flex gap-4 items-start">
-          {/* Transport and Progress Section */}
-          <div className="flex-1">
+        <div className="max-w-4xl mx-auto space-y-4">
+          {/* Metronome and Transport Buttons */}
+          <div className="flex items-center justify-center gap-6">
+            {/* Metronome */}
+            <Metronome isPlaying={isPlaying} layout="horizontal" />
+
             {/* Transport Buttons */}
-            <div className="flex items-center justify-center gap-3 mb-4">
+            <div className="flex items-center gap-3">
               <button
             onClick={isMasterRecording ? stopMasterRecording : startMasterRecording}
             disabled={isSelectMode}
@@ -748,10 +1206,11 @@ export default function SamplesPage() {
           >
             Clear
           </button>
-        </div>
+            </div>
+          </div>
 
-        {/* Progress Bar */}
-        {masterRecording && duration > 0 && (
+          {/* Progress Bar */}
+          {masterRecording && duration > 0 && (
           <div className="flex items-center gap-3">
             <div className="text-gray-400 text-xs font-mono w-12 text-right">
               {Math.floor(playbackPosition / 60)}:{Math.floor(playbackPosition % 60).toString().padStart(2, '0')}
@@ -784,12 +1243,97 @@ export default function SamplesPage() {
               {Math.floor(duration / 60)}:{Math.floor(duration % 60).toString().padStart(2, '0')}
             </div>
           </div>
-        )}
-          </div>
+          )}
+        </div>
+      </div>
 
-          {/* Metronome */}
-          <div className="w-80">
-            <Metronome isPlaying={isPlaying} />
+      {/* MIDI Panel */}
+      <div className="px-4 pb-2">
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+            {/* Header - Always visible, clickable to expand/collapse */}
+            <button
+              onClick={() => setIsMidiPanelExpanded(!isMidiPanelExpanded)}
+              className="w-full flex items-center justify-between p-3 hover:bg-gray-800 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M13 7H7v6h6V7z" />
+                  <path fillRule="evenodd" d="M7 2a1 1 0 012 0v1h2V2a1 1 0 112 0v1h2a2 2 0 012 2v2h1a1 1 0 110 2h-1v2h1a1 1 0 110 2h-1v2a2 2 0 01-2 2h-2v1a1 1 0 11-2 0v-1H9v1a1 1 0 11-2 0v-1H5a2 2 0 01-2-2v-2H2a1 1 0 110-2h1V9H2a1 1 0 010-2h1V5a2 2 0 012-2h2V2zM5 5h10v10H5V5z" clipRule="evenodd" />
+                </svg>
+                <h3 className="text-white text-sm font-bold">MIDI Controller</h3>
+                {selectedMidiDevice && midiDevices.length > 0 && (
+                  <span className="text-xs text-green-400">
+                    ✓ {midiDevices.find(d => d.id === selectedMidiDevice)?.name}
+                  </span>
+                )}
+              </div>
+              <svg
+                className={`w-5 h-5 text-gray-400 transition-transform ${isMidiPanelExpanded ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {/* Expandable Content */}
+            {isMidiPanelExpanded && (
+              <div className="px-3 pb-3 border-t border-gray-800 space-y-3">
+                {midiDevices.length > 0 ? (
+                  <>
+                    {/* Device info and assigned notes */}
+                    <div className="pt-3 space-y-2">
+                      <div className="text-xs text-gray-400">
+                        Connected Device: <span className="text-white font-mono">
+                          {selectedMidiDevice
+                            ? midiDevices.find(d => d.id === selectedMidiDevice)?.name || 'None'
+                            : 'None selected'}
+                        </span>
+                      </div>
+
+                      {/* Show samples with assigned MIDI notes */}
+                      <div className="bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
+                        <div className="text-xs text-gray-400 mb-2 font-bold">Assigned MIDI Notes:</div>
+                        {samples.filter(s => s.midiNote !== undefined && s.midiNote !== null).length > 0 ? (
+                          <div className="space-y-1">
+                            {samples.map((sample, index) => {
+                              if (sample.midiNote === undefined || sample.midiNote === null) return null;
+                              return (
+                                <div key={sample.id} className="flex justify-between items-center text-xs">
+                                  <span className="text-gray-300">Sample {index + 1}</span>
+                                  <span className="text-blue-400 font-mono">
+                                    {MIDIHelpers.noteNumberToName(sample.midiNote)} (Note {sample.midiNote})
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-500 text-center py-2">
+                            No MIDI notes assigned to samples yet.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Button to go to Record page for assignment */}
+                      <button
+                        onClick={() => router.push('/')}
+                        className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg transition-colors"
+                      >
+                        Go to Record Page to Assign Notes
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-gray-500 text-sm text-center py-4">
+                    <p>No MIDI devices found.</p>
+                    <p className="text-xs mt-1">Connect a MIDI controller to assign notes to samples.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -805,11 +1349,10 @@ export default function SamplesPage() {
             </div>
           ) : (
             <div
-              className="grid gap-2 aspect-square w-full"
+              className="grid gap-2"
               style={{
-                gridTemplateColumns: `repeat(${gridSize}, 1fr)`,
-                gridTemplateRows: `repeat(${gridSize}, 1fr)`,
-                maxWidth: '60%',
+                gridTemplateColumns: `repeat(${gridSize}, ${buttonSize}px)`,
+                gridTemplateRows: `repeat(${gridSize}, ${buttonSize}px)`,
               }}
             >
               {samples.map((sample, index) => {
@@ -829,7 +1372,17 @@ export default function SamplesPage() {
                     onMouseLeave={() => setHoveredSample(null)}
                   >
                     <button
-                      onClick={() => isSelectMode ? toggleSampleSelection(sample.id) : playSample(sample.blob, sample.id)}
+                      onClick={() => {
+                        if (isSelectMode) {
+                          toggleSampleSelection(sample.id);
+                        } else {
+                          playSample(sample.blob, sample.id);
+                          // Update effects panel to show this sample's effects
+                          if (selectedEffectsSample !== sample.id) {
+                            setSelectedEffectsSample(sample.id);
+                          }
+                        }
+                      }}
                       className={`w-full h-full rounded-xl text-white font-bold text-2xl transition-all shadow-lg flex flex-col items-center justify-center relative overflow-hidden ${
                         isSelectMode
                           ? isSelected
@@ -872,6 +1425,24 @@ export default function SamplesPage() {
                       )}
                     </button>
 
+                    {/* Edit (pencil) icon button */}
+                    {!isSelectMode && hoveredSample === sample.id && (
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          // Create a defensive copy of the blob to ensure we're editing the correct sample
+                          const blobCopy = sample.blob.slice(0, sample.blob.size, sample.blob.type);
+                          setEditingSample({ blob: blobCopy, id: sample.id, index, name: sample.name, midiNote: sample.midiNote });
+                        }}
+                        className="absolute bottom-2 left-2 w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-lg z-20 hover:bg-gray-100"
+                        title="Edit Sample"
+                      >
+                        <svg className="w-4 h-4 text-gray-800" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                        </svg>
+                      </button>
+                    )}
+
                     {/* Effects menu button */}
                     {!isSelectMode && hoveredSample === sample.id && (
                       <button
@@ -904,16 +1475,20 @@ export default function SamplesPage() {
           )}
         </div>
 
-        {/* Effects Control Panel */}
+        {/* Modern Effects Control Panel */}
         {selectedEffectsSample && (
-          <div className="flex-1 bg-gray-900 rounded-xl pl-4 pr-12 py-4 overflow-y-auto max-w-md">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-white font-bold text-lg">
-                Sample {samples.findIndex(s => s.id === selectedEffectsSample) + 1} Effects
-              </h3>
+          <div className="flex-1 bg-black/40 backdrop-blur-xl rounded-2xl p-6 overflow-y-auto max-w-md border border-white/10 shadow-2xl">
+            {/* Header with Glass Effect */}
+            <div className="flex justify-between items-center mb-8 pb-4 border-b border-white/10">
+              <div>
+                <h3 className="text-white font-bold text-xl tracking-tight">Mixing and Effects</h3>
+                <p className="text-gray-400 text-sm mt-1.5 font-medium">
+                  Sample {samples.findIndex(s => s.id === selectedEffectsSample) + 1}
+                </p>
+              </div>
               <button
                 onClick={() => setSelectedEffectsSample(null)}
-                className="text-gray-400 hover:text-white"
+                className="text-gray-400 hover:text-white transition-all p-2.5 rounded-xl hover:bg-white/10 active:scale-95"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -921,287 +1496,438 @@ export default function SamplesPage() {
               </button>
             </div>
 
-            <div className="space-y-4">
-              {/* Reverb */}
-              <div className="border-b border-gray-800 pb-4">
-                <label className="flex items-center justify-between mb-2">
-                  <span className="text-white font-medium">Reverb</span>
-                  <input
-                    type="checkbox"
-                    checked={sampleEffects.get(selectedEffectsSample)?.reverb.enabled || false}
-                    onChange={(e) => {
-                      const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                      setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                        ...effects,
-                        reverb: { ...effects.reverb, enabled: e.target.checked }
-                      }));
-                    }}
-                    className="w-4 h-4"
-                  />
-                </label>
-                {sampleEffects.get(selectedEffectsSample)?.reverb.enabled && (
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <label className="text-gray-400">Decay</label>
-                      <input
-                        type="range"
-                        min="0.1"
-                        max="5"
-                        step="0.1"
-                        value={sampleEffects.get(selectedEffectsSample)?.reverb.decay || 2}
-                        onChange={(e) => {
-                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                            ...effects,
-                            reverb: { ...effects.reverb, decay: parseFloat(e.target.value) }
-                          }));
-                        }}
-                        className="w-full"
-                      />
+            <div className="space-y-5">
+              {/* MIXING Section */}
+              <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-5 border border-white/10 hover:border-cyan-400/30 transition-all duration-300">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-1 h-6 bg-cyan-400 rounded-full"></div>
+                  <h4 className="text-cyan-400 font-bold text-sm uppercase tracking-wider">Mixing</h4>
+                </div>
+
+                <div className="space-y-5">
+                  {/* Volume Control */}
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-white font-semibold text-sm">Volume</label>
+                      <span className="text-cyan-400 text-xs font-mono font-semibold px-2 py-0.5 bg-cyan-400/10 rounded">
+                        {Math.round((sampleEffects.get(selectedEffectsSample)?.volume || 1) * 100)}%
+                      </span>
                     </div>
-                    <div>
-                      <label className="text-gray-400">Wet</label>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        value={sampleEffects.get(selectedEffectsSample)?.reverb.wet || 0.3}
-                        onChange={(e) => {
-                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                            ...effects,
-                            reverb: { ...effects.reverb, wet: parseFloat(e.target.value) }
-                          }));
-                        }}
-                        className="w-full"
-                      />
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.01"
+                      value={sampleEffects.get(selectedEffectsSample)?.volume || 1}
+                      onChange={(e) => {
+                        const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                        setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                          ...effects,
+                          volume: parseFloat(e.target.value)
+                        }));
+                      }}
+                      className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan-400 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:shadow-cyan-400/50 hover:[&::-webkit-slider-thumb]:scale-110 [&::-webkit-slider-thumb]:transition-transform"
+                    />
+                  </div>
+
+                  {/* Pan Control */}
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-white font-semibold text-sm">Pan</label>
+                      <span className="text-cyan-400 text-xs font-mono font-semibold px-2 py-0.5 bg-cyan-400/10 rounded">
+                        {(sampleEffects.get(selectedEffectsSample)?.pan || 0) < 0
+                          ? `${Math.abs(Math.round((sampleEffects.get(selectedEffectsSample)?.pan || 0) * 100))}% L`
+                          : (sampleEffects.get(selectedEffectsSample)?.pan || 0) > 0
+                          ? `${Math.round((sampleEffects.get(selectedEffectsSample)?.pan || 0) * 100)}% R`
+                          : 'C'}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-1"
+                      max="1"
+                      step="0.01"
+                      value={sampleEffects.get(selectedEffectsSample)?.pan || 0}
+                      onChange={(e) => {
+                        const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                        setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                          ...effects,
+                          pan: parseFloat(e.target.value)
+                        }));
+                      }}
+                      className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan-400 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:shadow-cyan-400/50 hover:[&::-webkit-slider-thumb]:scale-110 [&::-webkit-slider-thumb]:transition-transform"
+                    />
+                    <div className="flex justify-between text-[10px] text-gray-500 mt-1">
+                      <span>L</span>
+                      <span>C</span>
+                      <span>R</span>
                     </div>
                   </div>
-                )}
+                </div>
               </div>
 
-              {/* Delay */}
-              <div className="border-b border-gray-800 pb-4">
-                <label className="flex items-center justify-between mb-2">
-                  <span className="text-white font-medium">Delay</span>
-                  <input
-                    type="checkbox"
-                    checked={sampleEffects.get(selectedEffectsSample)?.delay.enabled || false}
-                    onChange={(e) => {
-                      const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                      setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                        ...effects,
-                        delay: { ...effects.delay, enabled: e.target.checked }
-                      }));
-                    }}
-                    className="w-4 h-4"
-                  />
-                </label>
-                {sampleEffects.get(selectedEffectsSample)?.delay.enabled && (
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <label className="text-gray-400">Time</label>
-                        <span className="text-blue-400 text-xs font-mono">
-                          {Math.round((sampleEffects.get(selectedEffectsSample)?.delay.time || 0.3) * 1000)}ms
-                        </span>
+              {/* DYNAMICS Section */}
+              <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-5 border border-white/10 hover:border-blue-400/30 transition-all duration-300">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-1 h-6 bg-blue-400 rounded-full"></div>
+                  <h4 className="text-blue-400 font-bold text-sm uppercase tracking-wider">Dynamics</h4>
+                </div>
+
+                {/* Compression */}
+                <div className="space-y-4">
+                  <label className="flex items-center justify-between group cursor-pointer">
+                    <span className="text-white font-semibold text-sm group-hover:text-blue-400 transition-colors">Compressor</span>
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={sampleEffects.get(selectedEffectsSample)?.compression.enabled || false}
+                        onChange={(e) => {
+                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                            ...effects,
+                            compression: { ...effects.compression, enabled: e.target.checked }
+                          }));
+                        }}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                    </div>
+                  </label>
+                  {sampleEffects.get(selectedEffectsSample)?.compression.enabled && (
+                    <div className="grid grid-cols-2 gap-4 pt-2 pl-1">
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="text-gray-400 text-xs font-medium">Threshold</label>
+                          <span className="text-blue-400 text-xs font-mono font-semibold px-2 py-0.5 bg-blue-400/10 rounded">
+                            {sampleEffects.get(selectedEffectsSample)?.compression.threshold || -24}dB
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-60"
+                          max="0"
+                          step="1"
+                          value={sampleEffects.get(selectedEffectsSample)?.compression.threshold || -24}
+                          onChange={(e) => {
+                            const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                            setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                              ...effects,
+                              compression: { ...effects.compression, threshold: parseFloat(e.target.value) }
+                            }));
+                          }}
+                          className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:shadow-blue-400/50 hover:[&::-webkit-slider-thumb]:scale-110 [&::-webkit-slider-thumb]:transition-transform"
+                        />
                       </div>
-                      <input
-                        type="range"
-                        min="0.01"
-                        max="2"
-                        step="0.01"
-                        value={sampleEffects.get(selectedEffectsSample)?.delay.time || 0.3}
-                        onChange={(e) => {
-                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                            ...effects,
-                            delay: { ...effects.delay, time: parseFloat(e.target.value) }
-                          }));
-                        }}
-                        className="w-full"
-                      />
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="text-gray-400 text-xs font-medium">Ratio</label>
+                          <span className="text-blue-400 text-xs font-mono font-semibold px-2 py-0.5 bg-blue-400/10 rounded">
+                            {(sampleEffects.get(selectedEffectsSample)?.compression.ratio || 4).toFixed(1)}:1
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="1"
+                          max="20"
+                          step="0.1"
+                          value={sampleEffects.get(selectedEffectsSample)?.compression.ratio || 4}
+                          onChange={(e) => {
+                            const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                            setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                              ...effects,
+                              compression: { ...effects.compression, ratio: parseFloat(e.target.value) }
+                            }));
+                          }}
+                          className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:shadow-blue-400/50 hover:[&::-webkit-slider-thumb]:scale-110 [&::-webkit-slider-thumb]:transition-transform"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-gray-400">Feedback</label>
-                      <input
-                        type="range"
-                        min="0"
-                        max="0.9"
-                        step="0.01"
-                        value={sampleEffects.get(selectedEffectsSample)?.delay.feedback || 0.3}
-                        onChange={(e) => {
-                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                            ...effects,
-                            delay: { ...effects.delay, feedback: parseFloat(e.target.value) }
-                          }));
-                        }}
-                        className="w-full"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-gray-400">Wet</label>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        value={sampleEffects.get(selectedEffectsSample)?.delay.wet || 0.5}
-                        onChange={(e) => {
-                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                            ...effects,
-                            delay: { ...effects.delay, wet: parseFloat(e.target.value) }
-                          }));
-                        }}
-                        className="w-full"
-                      />
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
-              {/* Compression */}
-              <div className="border-b border-gray-800 pb-4">
-                <label className="flex items-center justify-between mb-2">
-                  <span className="text-white font-medium">Compression</span>
-                  <input
-                    type="checkbox"
-                    checked={sampleEffects.get(selectedEffectsSample)?.compression.enabled || false}
-                    onChange={(e) => {
-                      const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                      setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                        ...effects,
-                        compression: { ...effects.compression, enabled: e.target.checked }
-                      }));
-                    }}
-                    className="w-4 h-4"
-                  />
-                </label>
-                {sampleEffects.get(selectedEffectsSample)?.compression.enabled && (
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <label className="text-gray-400">Threshold</label>
+              {/* EQ Section */}
+              <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-5 border border-white/10 hover:border-green-400/30 transition-all duration-300">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-1 h-6 bg-green-400 rounded-full"></div>
+                  <h4 className="text-green-400 font-bold text-sm uppercase tracking-wider">Equalization</h4>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="flex items-center justify-between group cursor-pointer">
+                    <span className="text-white font-semibold text-sm group-hover:text-green-400 transition-colors">3-Band EQ</span>
+                    <div className="relative">
                       <input
-                        type="range"
-                        min="-60"
-                        max="0"
-                        step="1"
-                        value={sampleEffects.get(selectedEffectsSample)?.compression.threshold || -24}
+                        type="checkbox"
+                        checked={sampleEffects.get(selectedEffectsSample)?.eq.enabled || false}
                         onChange={(e) => {
                           const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
                           setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
                             ...effects,
-                            compression: { ...effects.compression, threshold: parseFloat(e.target.value) }
+                            eq: { ...effects.eq, enabled: e.target.checked }
                           }));
                         }}
-                        className="w-full"
+                        className="sr-only peer"
                       />
+                      <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
                     </div>
-                    <div>
-                      <label className="text-gray-400">Ratio</label>
-                      <input
-                        type="range"
-                        min="1"
-                        max="20"
-                        step="0.1"
-                        value={sampleEffects.get(selectedEffectsSample)?.compression.ratio || 4}
-                        onChange={(e) => {
-                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                            ...effects,
-                            compression: { ...effects.compression, ratio: parseFloat(e.target.value) }
-                          }));
-                        }}
-                        className="w-full"
-                      />
+                  </label>
+                  {sampleEffects.get(selectedEffectsSample)?.eq.enabled && (
+                    <div className="grid grid-cols-3 gap-3 pt-2">
+                      <div className="text-center">
+                        <label className="text-gray-400 text-xs block mb-2">Low</label>
+                        <div className="flex flex-col items-center">
+                          <input
+                            type="range"
+                            min="-12"
+                            max="12"
+                            step="0.1"
+                            value={sampleEffects.get(selectedEffectsSample)?.eq.low || 0}
+                            onChange={(e) => {
+                              const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                              setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                                ...effects,
+                                eq: { ...effects.eq, low: parseFloat(e.target.value) }
+                              }));
+                            }}
+                            className="w-2 h-24 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                            style={{ WebkitAppearance: 'slider-vertical' } as React.CSSProperties}
+                          />
+                          <span className="text-green-400 text-xs font-mono mt-2">
+                            {(sampleEffects.get(selectedEffectsSample)?.eq.low || 0) > 0 ? '+' : ''}
+                            {(sampleEffects.get(selectedEffectsSample)?.eq.low || 0).toFixed(1)}dB
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-center">
+                        <label className="text-gray-400 text-xs block mb-2">Mid</label>
+                        <div className="flex flex-col items-center">
+                          <input
+                            type="range"
+                            min="-12"
+                            max="12"
+                            step="0.1"
+                            value={sampleEffects.get(selectedEffectsSample)?.eq.mid || 0}
+                            onChange={(e) => {
+                              const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                              setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                                ...effects,
+                                eq: { ...effects.eq, mid: parseFloat(e.target.value) }
+                              }));
+                            }}
+                            className="w-2 h-24 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                            style={{ WebkitAppearance: 'slider-vertical' } as React.CSSProperties}
+                          />
+                          <span className="text-green-400 text-xs font-mono mt-2">
+                            {(sampleEffects.get(selectedEffectsSample)?.eq.mid || 0) > 0 ? '+' : ''}
+                            {(sampleEffects.get(selectedEffectsSample)?.eq.mid || 0).toFixed(1)}dB
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-center">
+                        <label className="text-gray-400 text-xs block mb-2">High</label>
+                        <div className="flex flex-col items-center">
+                          <input
+                            type="range"
+                            min="-12"
+                            max="12"
+                            step="0.1"
+                            value={sampleEffects.get(selectedEffectsSample)?.eq.high || 0}
+                            onChange={(e) => {
+                              const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                              setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                                ...effects,
+                                eq: { ...effects.eq, high: parseFloat(e.target.value) }
+                              }));
+                            }}
+                            className="w-2 h-24 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                            style={{ WebkitAppearance: 'slider-vertical' } as React.CSSProperties}
+                          />
+                          <span className="text-green-400 text-xs font-mono mt-2">
+                            {(sampleEffects.get(selectedEffectsSample)?.eq.high || 0) > 0 ? '+' : ''}
+                            {(sampleEffects.get(selectedEffectsSample)?.eq.high || 0).toFixed(1)}dB
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
-              {/* EQ */}
-              <div className="border-b border-gray-800 pb-4">
-                <label className="flex items-center justify-between mb-2">
-                  <span className="text-white font-medium">Equalization</span>
-                  <input
-                    type="checkbox"
-                    checked={sampleEffects.get(selectedEffectsSample)?.eq.enabled || false}
-                    onChange={(e) => {
-                      const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                      setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                        ...effects,
-                        eq: { ...effects.eq, enabled: e.target.checked }
-                      }));
-                    }}
-                    className="w-4 h-4"
-                  />
-                </label>
-                {sampleEffects.get(selectedEffectsSample)?.eq.enabled && (
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <label className="text-gray-400">Low (320Hz)</label>
-                      <input
-                        type="range"
-                        min="-12"
-                        max="12"
-                        step="0.1"
-                        value={sampleEffects.get(selectedEffectsSample)?.eq.low || 0}
-                        onChange={(e) => {
-                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                            ...effects,
-                            eq: { ...effects.eq, low: parseFloat(e.target.value) }
-                          }));
-                        }}
-                        className="w-full"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-gray-400">Mid (1kHz)</label>
-                      <input
-                        type="range"
-                        min="-12"
-                        max="12"
-                        step="0.1"
-                        value={sampleEffects.get(selectedEffectsSample)?.eq.mid || 0}
-                        onChange={(e) => {
-                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                            ...effects,
-                            eq: { ...effects.eq, mid: parseFloat(e.target.value) }
-                          }));
-                        }}
-                        className="w-full"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-gray-400">High (3.2kHz)</label>
-                      <input
-                        type="range"
-                        min="-12"
-                        max="12"
-                        step="0.1"
-                        value={sampleEffects.get(selectedEffectsSample)?.eq.high || 0}
-                        onChange={(e) => {
-                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
-                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
-                            ...effects,
-                            eq: { ...effects.eq, high: parseFloat(e.target.value) }
-                          }));
-                        }}
-                        className="w-full"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
+              {/* TIME-BASED Section */}
+              <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-5 border border-white/10 hover:border-purple-400/30 transition-all duration-300">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-1 h-6 bg-purple-400 rounded-full"></div>
+                  <h4 className="text-purple-400 font-bold text-sm uppercase tracking-wider">Time-Based FX</h4>
+                </div>
 
-              <p className="text-gray-500 text-xs text-center mt-4">
-                Phaser, Flanger, and Chorus effects coming soon
-              </p>
+                {/* Delay */}
+                <div className="space-y-4 mb-6 pb-6 border-b border-white/10">
+                  <label className="flex items-center justify-between group cursor-pointer">
+                    <span className="text-white font-semibold text-sm group-hover:text-purple-400 transition-colors">Delay</span>
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={sampleEffects.get(selectedEffectsSample)?.delay.enabled || false}
+                        onChange={(e) => {
+                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                            ...effects,
+                            delay: { ...effects.delay, enabled: e.target.checked }
+                          }));
+                        }}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
+                    </div>
+                  </label>
+                  {sampleEffects.get(selectedEffectsSample)?.delay.enabled && (
+                    <div className="grid grid-cols-3 gap-3 pt-2">
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-gray-400 text-xs">Time</label>
+                          <span className="text-purple-400 text-xs font-mono">
+                            {Math.round((sampleEffects.get(selectedEffectsSample)?.delay.time || 0.3) * 1000)}ms
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.01"
+                          max="2"
+                          step="0.01"
+                          value={sampleEffects.get(selectedEffectsSample)?.delay.time || 0.3}
+                          onChange={(e) => {
+                            const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                            setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                              ...effects,
+                              delay: { ...effects.delay, time: parseFloat(e.target.value) }
+                            }));
+                          }}
+                          className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-gray-400 text-xs">Feedback</label>
+                          <span className="text-purple-400 text-xs font-mono">
+                            {Math.round((sampleEffects.get(selectedEffectsSample)?.delay.feedback || 0.3) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="0.9"
+                          step="0.01"
+                          value={sampleEffects.get(selectedEffectsSample)?.delay.feedback || 0.3}
+                          onChange={(e) => {
+                            const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                            setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                              ...effects,
+                              delay: { ...effects.delay, feedback: parseFloat(e.target.value) }
+                            }));
+                          }}
+                          className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-gray-400 text-xs">Mix</label>
+                          <span className="text-purple-400 text-xs font-mono">
+                            {Math.round((sampleEffects.get(selectedEffectsSample)?.delay.wet || 0.5) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={sampleEffects.get(selectedEffectsSample)?.delay.wet || 0.5}
+                          onChange={(e) => {
+                            const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                            setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                              ...effects,
+                              delay: { ...effects.delay, wet: parseFloat(e.target.value) }
+                            }));
+                          }}
+                          className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Reverb */}
+                <div className="space-y-4">
+                  <label className="flex items-center justify-between group cursor-pointer">
+                    <span className="text-white font-semibold text-sm group-hover:text-purple-400 transition-colors">Reverb</span>
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={sampleEffects.get(selectedEffectsSample)?.reverb.enabled || false}
+                        onChange={(e) => {
+                          const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                          setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                            ...effects,
+                            reverb: { ...effects.reverb, enabled: e.target.checked }
+                          }));
+                        }}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
+                    </div>
+                  </label>
+                  {sampleEffects.get(selectedEffectsSample)?.reverb.enabled && (
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-gray-400 text-xs">Decay</label>
+                          <span className="text-purple-400 text-xs font-mono">
+                            {(sampleEffects.get(selectedEffectsSample)?.reverb.decay || 2).toFixed(1)}s
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="5"
+                          step="0.1"
+                          value={sampleEffects.get(selectedEffectsSample)?.reverb.decay || 2}
+                          onChange={(e) => {
+                            const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                            setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                              ...effects,
+                              reverb: { ...effects.reverb, decay: parseFloat(e.target.value) }
+                            }));
+                          }}
+                          className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-gray-400 text-xs">Mix</label>
+                          <span className="text-purple-400 text-xs font-mono">
+                            {Math.round((sampleEffects.get(selectedEffectsSample)?.reverb.wet || 0.3) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={sampleEffects.get(selectedEffectsSample)?.reverb.wet || 0.3}
+                          onChange={(e) => {
+                            const effects = sampleEffects.get(selectedEffectsSample) || DEFAULT_EFFECTS;
+                            setSampleEffects(prev => new Map(prev).set(selectedEffectsSample, {
+                              ...effects,
+                              reverb: { ...effects.reverb, wet: parseFloat(e.target.value) }
+                            }));
+                          }}
+                          className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1211,7 +1937,33 @@ export default function SamplesPage() {
       <BottomNav />
 
       {/* Project Menu */}
-      <ProjectMenu isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
+      <ProjectMenu
+        isOpen={isMenuOpen}
+        onClose={() => setIsMenuOpen(false)}
+        onOpenHowToUse={() => setIsHowToUseOpen(true)}
+      />
+
+      {/* How to Use Overlay */}
+      <HowToUseOverlay isOpen={isHowToUseOpen} onClose={() => setIsHowToUseOpen(false)} />
+
+      {/* Help Button */}
+      <HelpButton onClick={() => setIsHowToUseOpen(true)} />
+
+      {/* Audio Editor */}
+      {editingSample && (
+        <AudioEditor
+          isOpen={true}
+          onClose={() => setEditingSample(null)}
+          sampleBlob={editingSample.blob}
+          sampleId={editingSample.id}
+          sampleIndex={editingSample.index}
+          sampleName={editingSample.name}
+          keyboardKey={getKeyForIndex(editingSample.index)}
+          midiNote={editingSample.midiNote}
+          onSave={handleSaveEditedSample}
+          onNameChange={handleSampleNameChange}
+        />
+      )}
     </div>
   );
 }

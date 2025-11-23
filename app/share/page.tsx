@@ -3,14 +3,19 @@
 import { useState, useEffect } from 'react';
 import BottomNav from '@/components/BottomNav';
 import ProjectMenu from '@/components/ProjectMenu';
+import HowToUseOverlay from '@/components/HowToUseOverlay';
+import HelpButton from '@/components/HelpButton';
 import { getMasterRecordingByProject, MasterRecording } from '@/lib/db';
 
 export default function SharePage() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isHowToUseOpen, setIsHowToUseOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [masterRecording, setMasterRecording] = useState<MasterRecording | null>(null);
   const [currentProjectId, setCurrentProjectId] = useState<string>('');
   const [isSoundCloudConnected, setIsSoundCloudConnected] = useState(false);
+  const [showRecordingTypeSelector, setShowRecordingTypeSelector] = useState(false);
+  const [pendingExportAction, setPendingExportAction] = useState<'export' | 'share' | 'soundcloud' | null>(null);
 
   useEffect(() => {
     // Load current project ID from localStorage
@@ -23,6 +28,25 @@ export default function SharePage() {
       loadMasterRecording();
     }
   }, [currentProjectId]);
+
+  // Keyboard event handler for "?" key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      // ? key to open How to Use
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault();
+        setIsHowToUseOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const loadMasterRecording = async () => {
     try {
@@ -85,15 +109,61 @@ export default function SharePage() {
     return new Blob([buffer], { type: 'audio/wav' });
   };
 
-  const handleExport = async () => {
+  const handleExportClick = () => {
     if (!masterRecording) {
       alert('No recording available to export');
       return;
     }
+    setPendingExportAction('export');
+    setShowRecordingTypeSelector(true);
+  };
 
+  const handleShareClick = () => {
+    if (!masterRecording) {
+      alert('No recording available to share');
+      return;
+    }
+    // Check if Web Share API is supported
+    if (!navigator.share) {
+      alert('Web Share is not supported in your browser. Try using a mobile browser or the "Export to Device" option instead.');
+      return;
+    }
+    setPendingExportAction('share');
+    setShowRecordingTypeSelector(true);
+  };
+
+  const handleSoundCloudClick = () => {
+    if (!masterRecording) {
+      alert('No recording available to share');
+      return;
+    }
+    setPendingExportAction('soundcloud');
+    setShowRecordingTypeSelector(true);
+  };
+
+  const handleRecordingTypeSelected = async (recordingType: 'samples' | 'sequence') => {
+    setShowRecordingTypeSelector(false);
+
+    // For now, both use the master recording
+    // In the future, you can load different recordings based on the type
+    const recording = masterRecording;
+    if (!recording) return;
+
+    if (pendingExportAction === 'export') {
+      await performExport(recording);
+    } else if (pendingExportAction === 'share') {
+      await performWebShare(recording);
+    } else if (pendingExportAction === 'soundcloud') {
+      await performSoundCloudShare();
+    }
+
+    setPendingExportAction(null);
+  };
+
+  const performExport = async (recording: MasterRecording) => {
     setIsExporting(true);
     try {
-      const wavBlob = await convertToWav(masterRecording.blob);
+      const wavBlob = await convertToWav(recording.blob);
       const url = URL.createObjectURL(wavBlob);
       const a = document.createElement('a');
       a.href = url;
@@ -109,6 +179,45 @@ export default function SharePage() {
     } finally {
       setIsExporting(false);
     }
+  };
+
+  const performWebShare = async (recording: MasterRecording) => {
+    setIsExporting(true);
+    try {
+      const wavBlob = await convertToWav(recording.blob);
+      const file = new File([wavBlob], `chop-shop-${Date.now()}.wav`, { type: 'audio/wav' });
+
+      // Check if sharing files is supported
+      if (navigator.canShare && !navigator.canShare({ files: [file] })) {
+        alert('Sharing audio files is not supported in your browser.');
+        setIsExporting(false);
+        return;
+      }
+
+      await navigator.share({
+        title: 'My Chop Shop Recording',
+        text: 'Check out my music created with Chop Shop!',
+        files: [file]
+      });
+
+      console.log('Shared successfully');
+    } catch (error: any) {
+      // User cancelled the share or an error occurred
+      if (error.name !== 'AbortError') {
+        console.error('Failed to share:', error);
+        alert('Failed to share recording. Please try again.');
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const performSoundCloudShare = async () => {
+    if (!isSoundCloudConnected) {
+      alert('Please connect to SoundCloud first by clicking "Connect SoundCloud Account"');
+      return;
+    }
+    alert('SoundCloud upload feature will be available once you connect your account');
   };
 
   const handleConnectSoundCloud = () => {
@@ -193,7 +302,7 @@ export default function SharePage() {
         {/* Share Options */}
         <div className="space-y-3">
           <button
-            onClick={handleExport}
+            onClick={handleExportClick}
             disabled={!masterRecording || isExporting}
             className="w-full h-16 rounded-xl bg-gray-800 hover:bg-gray-700 text-white font-bold text-lg flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
@@ -201,6 +310,17 @@ export default function SharePage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             {isExporting ? 'Exporting...' : 'Export to Device (WAV)'}
+          </button>
+
+          <button
+            onClick={handleShareClick}
+            disabled={!masterRecording || isExporting}
+            className="w-full h-16 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+            </svg>
+            Share
           </button>
 
           {!isSoundCloudConnected ? (
@@ -215,7 +335,7 @@ export default function SharePage() {
             </button>
           ) : (
             <button
-              onClick={handleShareSoundCloud}
+              onClick={handleSoundCloudClick}
               disabled={!masterRecording}
               className="w-full h-16 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold text-lg flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
@@ -232,7 +352,47 @@ export default function SharePage() {
       <BottomNav />
 
       {/* Project Menu */}
-      <ProjectMenu isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
+      <ProjectMenu
+        isOpen={isMenuOpen}
+        onClose={() => setIsMenuOpen(false)}
+        onOpenHowToUse={() => setIsHowToUseOpen(true)}
+      />
+
+      {/* How to Use Overlay */}
+      <HowToUseOverlay isOpen={isHowToUseOpen} onClose={() => setIsHowToUseOpen(false)} />
+
+      {/* Help Button */}
+      <HelpButton onClick={() => setIsHowToUseOpen(true)} />
+
+      {/* Recording Type Selector Popup */}
+      {showRecordingTypeSelector && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/80"
+            onClick={() => setShowRecordingTypeSelector(false)}
+          />
+
+          {/* Content */}
+          <div className="relative bg-gray-900 rounded-2xl p-6 max-w-md w-full">
+            <h3 className="text-white text-xl font-bold mb-4">Select Recording Type</h3>
+            <div className="space-y-3">
+              <button
+                onClick={() => handleRecordingTypeSelected('samples')}
+                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-colors"
+              >
+                Samples Recording
+              </button>
+              <button
+                onClick={() => handleRecordingTypeSelected('sequence')}
+                className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold transition-colors"
+              >
+                Sequence Recording
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

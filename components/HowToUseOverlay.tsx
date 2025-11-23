@@ -63,146 +63,207 @@ export default function HowToUseOverlay({ isOpen, onClose }: HowToUseOverlayProp
         {/* Instructions */}
         <div className="space-y-6 text-gray-300">
           <section>
-            <h3 className="text-white text-lg font-bold mb-3 flex items-center gap-2">
-              <span className="bg-pink-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold">1</span>
-              Record Page - Capture Audio
-            </h3>
-            <ul className="space-y-2 ml-8 text-sm">
+            <h3 className="text-white text-lg font-bold mb-3">Requirements: Google Chrome</h3>
+          </section>
+
+          <section>
+            <h3 className="text-white text-lg font-bold mb-3">Record Page - Capture audio from any web page</h3>
+            <ul className="space-y-2 ml-4 text-sm">
               <li className="flex items-start gap-2">
-                <span className="text-pink-400 mt-1">•</span>
-                <span>Click "Grant Audio Access" or press <kbd className="bg-gray-800 px-2 py-1 rounded text-xs">SPACEBAR</kbd></span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Click "Grant Audio Access" or press SPACEBAR</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-pink-400 mt-1">•</span>
-                <span>Select a <strong className="text-white">Browser Tab</strong> (not window or screen)</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Select a Browser Tab (not window or screen)</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-pink-400 mt-1">•</span>
-                <span>Make sure to check "Share audio" in the permission dialog</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Check "Share audio" in the permission dialog</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-pink-400 mt-1">•</span>
+                <span className="text-gray-400 mt-1">*</span>
                 <span>Choose a tab playing audio (YouTube, Spotify, etc.)</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-pink-400 mt-1">•</span>
-                <span>Hold the button or <kbd className="bg-gray-800 px-2 py-1 rounded text-xs">SPACEBAR</kbd> to record</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-pink-400 mt-1">•</span>
-                <span>Release to stop and save the sample</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Hold the button or SPACEBAR to record, and release to stop and save the sample</span>
               </li>
             </ul>
           </section>
 
           <section>
-            <h3 className="text-white text-lg font-bold mb-3 flex items-center gap-2">
-              <span className="bg-purple-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold">2</span>
-              Samples Page - Create Music
-            </h3>
-            <ul className="space-y-2 ml-8 text-sm">
+            <h3 className="text-white text-lg font-bold mb-3">MIDI Controller Support</h3>
+            <ul className="space-y-2 ml-4 text-sm">
               <li className="flex items-start gap-2">
-                <span className="text-purple-400 mt-1">•</span>
-                <span>Your recorded samples appear as colorful grid buttons</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Connect a MIDI controller to play samples with MIDI notes</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-purple-400 mt-1">•</span>
-                <span>Click any button to play a sample, or use keyboard shortcuts:</span>
-              </li>
-              <li className="flex items-start gap-2 ml-4">
-                <span className="text-purple-300 mt-1">-</span>
-                <span><kbd className="bg-gray-800 px-2 py-1 rounded text-xs">1-0</kbd> for first row</span>
-              </li>
-              <li className="flex items-start gap-2 ml-4">
-                <span className="text-purple-300 mt-1">-</span>
-                <span><kbd className="bg-gray-800 px-2 py-1 rounded text-xs">Q-P</kbd> for second row</span>
-              </li>
-              <li className="flex items-start gap-2 ml-4">
-                <span className="text-purple-300 mt-1">-</span>
-                <span><kbd className="bg-gray-800 px-2 py-1 rounded text-xs">A-;</kbd> for third row, etc.</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>On Record page, select your MIDI device and click "Learn Note"</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-purple-400 mt-1">•</span>
-                <span>Right-click a sample for options (add effects, delete, rename)</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Press a key on your MIDI controller to assign it to the next sample you record</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-purple-400 mt-1">•</span>
-                <span>Use the transport controls to record your live performance</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-purple-400 mt-1">•</span>
-                <span>Toggle between Mono and Poly playback modes</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>View assigned MIDI notes in the MIDI panel on Samples page</span>
               </li>
             </ul>
           </section>
 
           <section>
-            <h3 className="text-white text-lg font-bold mb-3 flex items-center gap-2">
-              <span className="bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold">3</span>
-              Audio Effects
-            </h3>
-            <ul className="space-y-2 ml-8 text-sm">
+            <h3 className="text-white text-lg font-bold mb-3">Samples Page - Create a live performance</h3>
+            <ul className="space-y-2 ml-4 text-sm">
               <li className="flex items-start gap-2">
-                <span className="text-blue-400 mt-1">•</span>
-                <span>Right-click any sample and select "Add Effects"</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Your recorded samples appear as playable grid buttons</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-blue-400 mt-1">•</span>
-                <span>Effects panel appears on the right side of the screen</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Click any button to play a sample, or use keyboard shortcuts (1-0, Q-P, A-L, Z-M)</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-blue-400 mt-1">•</span>
-                <span>Enable/disable effects with checkboxes</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Click the pencil icon to edit samples with the waveform editor</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-blue-400 mt-1">•</span>
-                <span>Available effects: Compression, EQ, Delay, Reverb, Phaser, Flanger, Chorus</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Click the effects icon (arrow) on each sample for DAW-style audio effects</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-blue-400 mt-1">•</span>
-                <span>Adjust sliders to fine-tune each effect</span>
-              </li>
-            </ul>
-          </section>
-
-          <section>
-            <h3 className="text-white text-lg font-bold mb-3 flex items-center gap-2">
-              <span className="bg-cyan-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold">4</span>
-              Share Page - Export Your Music
-            </h3>
-            <ul className="space-y-2 ml-8 text-sm">
-              <li className="flex items-start gap-2">
-                <span className="text-cyan-400 mt-1">•</span>
-                <span>Export your master recording as a WAV file</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Use transport controls to record your live performance</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-cyan-400 mt-1">•</span>
-                <span>Connect to SoundCloud to share your creations online</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Save/load instrument presets with the "Instrument" menu</span>
               </li>
             </ul>
           </section>
 
           <section>
-            <h3 className="text-white text-lg font-bold mb-3 flex items-center gap-2">
-              <span className="bg-green-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold">5</span>
-              Projects
-            </h3>
-            <ul className="space-y-2 ml-8 text-sm">
+            <h3 className="text-white text-lg font-bold mb-3">Audio Editor</h3>
+            <ul className="space-y-2 ml-4 text-sm">
               <li className="flex items-start gap-2">
-                <span className="text-green-400 mt-1">•</span>
-                <span>Access the hamburger menu (☰) to manage projects</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Trim samples by dragging the start/end markers on the waveform</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-green-400 mt-1">•</span>
-                <span>Create multiple projects to organize your samples</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Adjust volume, pitch (semitones and cents), and time stretch</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-green-400 mt-1">•</span>
-                <span>Switch between projects to work on different tracks</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Add fade in/out with adjustable duration</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-green-400 mt-1">•</span>
-                <span>Each project has its own samples and recordings</span>
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Use the Play/Pause button to preview your edits</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Changes are saved automatically when you close the editor</span>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 className="text-white text-lg font-bold mb-3">Audio Effects</h3>
+            <ul className="space-y-2 ml-4 text-sm">
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Effects panel appears on the right side when you click a sample's effect icon</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Available effects: Compressor, 3-Band EQ, Delay, and Reverb</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Each effect can be toggled on/off with detailed parameter controls</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Effects are saved per-sample and persist across sessions</span>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 className="text-white text-lg font-bold mb-3">Sequence Page - Create a sample-based sequence</h3>
+            <ul className="space-y-2 ml-4 text-sm">
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Create up to 8 independent sequencers with unique colors (Orange, Blue, Purple, etc.)</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Each sequencer supports 1-32 variable steps - create polyrhythms!</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Click any step to open a popup menu and assign a sample</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Hover over steps to see a dropdown arrow - click to select samples</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Set BPM and beat subdivision (quarter, 8th, 16th, or 32nd notes)</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Press Play to hear your sequence loop continuously</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Adjust individual volume per sequencer</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Double-click sequencer names to rename them</span>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 className="text-white text-lg font-bold mb-3">Share Page - Export Your Music</h3>
+            <ul className="space-y-2 ml-4 text-sm">
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Export your master recording as a WAV file to your local machine, SoundCloud, or anywhere of your choosing.</span>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 className="text-white text-lg font-bold mb-3">Projects</h3>
+            <ul className="space-y-2 ml-4 text-sm">
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Access the menu (☰) to manage projects</span>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 className="text-white text-lg font-bold mb-3">Keyboard Shortcuts</h3>
+            <ul className="space-y-2 ml-4 text-sm">
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Press "?" on any page to open this help overlay</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Press Escape to close dropdowns and modals</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-gray-400 mt-1">*</span>
+                <span>Spacebar to start/stop recording on Record page</span>
               </li>
             </ul>
           </section>
